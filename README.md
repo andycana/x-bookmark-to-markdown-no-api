@@ -4,6 +4,8 @@ Turn X/Twitter bookmarks into local Markdown instantly.
 
 [中文](#中文说明) | [English](#english)
 
+![Project Logo](assets/logo-square-512.png)
+
 ---
 
 ## 中文说明

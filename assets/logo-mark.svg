@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="X Bookmark to Markdown logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#121A2C"/>
+      <stop offset="100%" stop-color="#0B101C"/>
+    </linearGradient>
+  </defs>
+  <rect x="18" y="18" width="476" height="476" rx="96" fill="url(#bg)" stroke="#39537B" stroke-opacity="0.8"/>
+  <path d="M106 90h154a20 20 0 0 1 20 20v196l-97 60-97-60V110a20 20 0 0 1 20-20z" fill="#F4F9FF"/>
+  <rect x="132" y="132" width="30" height="88" rx="10" fill="#1D9BF0"/>
+  <text x="338" y="250" fill="#E8F1FF" font-size="88" font-family="Segoe UI, Arial, sans-serif" font-weight="700" text-anchor="middle">MD</text>
+  <text x="338" y="324" fill="#6BBCFF" font-size="48" font-family="Segoe UI, Arial, sans-serif" font-weight="700" text-anchor="middle">X ?</text>
+</svg>
