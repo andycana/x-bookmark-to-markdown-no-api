@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "X Bookmark → Markdown (No API)",
+  "version": "1.0.0",
+  "description": "Save X bookmarked posts to local Markdown immediately. No API, no key, no model calls.",
+  "permissions": [
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "X Bookmark → Markdown (No API)"
+  }
+}

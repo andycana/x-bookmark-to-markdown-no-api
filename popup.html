@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>X Bookmark Local Saver</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <h1>收藏即存档</h1>
+      <p class="desc">不调用任何 AI API。你在 X 点收藏后会自动保存 Markdown 到下载目录。</p>
+
+      <div class="stats">
+        <span id="countText">已保存 0 条</span>
+        <button id="clearBtn" type="button">清空记录</button>
+      </div>
+
+      <div id="empty" class="empty">暂无保存记录</div>
+      <div id="list" class="list"></div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
