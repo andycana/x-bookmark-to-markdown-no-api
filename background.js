@@ -71,12 +71,13 @@ async function pushHistory(tweetData, filePath) {
 }
 
 function buildMarkdown(tweetData) {
-  const text = (tweetData.text || '').trim() || '(无可提取文本，可能是图片/视频内容)';
+  const threadItems = normalizeThreadItems(tweetData.threadItems);
+  const firstThreadText = threadItems.length > 0 ? threadItems[0].text : '';
+  const text = (tweetData.text || '').trim() || firstThreadText || '(无可提取文本，可能是图片/视频内容)';
   const author = tweetData.author || 'Unknown';
   const source = tweetData.sourceUrl || tweetData.articleUrl || tweetData.tweetUrl || '';
   const time = formatDateTime(new Date(tweetData.timestamp || Date.now()));
-
-  return [
+  const lines = [
     '# X Bookmarked Post',
     '',
     '> **Author**: ' + author,
@@ -89,7 +90,48 @@ function buildMarkdown(tweetData) {
     '',
     text,
     '',
-  ].join('\n');
+  ];
+
+  if (threadItems.length > 1) {
+    lines.push('---');
+    lines.push('');
+    lines.push('## Thread Posts');
+    lines.push('');
+
+    threadItems.forEach(function (item, index) {
+      lines.push('### ' + (index + 1) + '. ' + (item.author || author));
+      if (item.tweetUrl) lines.push('> Source: ' + item.tweetUrl);
+      lines.push('');
+      lines.push(item.text);
+      lines.push('');
+    });
+  }
+
+  return lines.join('\n');
+}
+
+function normalizeThreadItems(rawItems) {
+  if (!Array.isArray(rawItems) || rawItems.length === 0) return [];
+  const result = [];
+  const seen = new Set();
+
+  rawItems.forEach(function (item) {
+    if (!item || typeof item !== 'object') return;
+    const text = String(item.text || '').trim();
+    if (!text) return;
+    const author = String(item.author || 'Unknown').trim() || 'Unknown';
+    const tweetUrl = String(item.tweetUrl || '').trim();
+    const key = (item.statusId ? String(item.statusId) : '') || tweetUrl || text.slice(0, 120);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    result.push({
+      text: text,
+      author: author,
+      tweetUrl: tweetUrl,
+    });
+  });
+
+  return result.slice(0, 20);
 }
 
 function buildFileName(tweetData) {

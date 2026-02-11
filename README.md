@@ -16,6 +16,7 @@ Turn X/Twitter bookmarks into local Markdown instantly.
 - 不需要 API Key
 - 不会产生模型调用费用
 - 在 X 点收藏后立即保存 Markdown
+- 线程（Thread）页面会自动合并同作者连续跟帖
 - 只保留原文，不做摘要、不改写内容
 
 ### 安装
@@ -76,6 +77,7 @@ A fully local Chrome extension that saves bookmarked posts from X/Twitter to Mar
 - No API key required
 - Zero model/token cost
 - Bookmark → save Markdown immediately
+- On thread pages, merges consecutive same-author posts
 - Original content only (no summary, no rewriting)
 
 ### Install

@@ -30,6 +30,11 @@
         return;
       }
 
+      const threadItems = extractThreadTweetsFromCurrentPage(tweetArticle, tweetData);
+      if (threadItems.length > 1) {
+        tweetData.threadItems = threadItems;
+      }
+
       const dedupeKey = buildDedupeKey(tweetData);
       if (isRecentlySaved(dedupeKey)) return;
       rememberSaved(dedupeKey);
@@ -147,6 +152,77 @@
       sourceUrl: sourceUrl,
       timestamp: Date.now(),
     };
+  }
+
+  function extractTweetDataFromArticleFast(article) {
+    const text = extractTweetText(article) || extractCardText(article) || '';
+    const userNameRoot = article.querySelector('[data-testid="User-Name"]');
+    const author = userNameRoot ? ((userNameRoot.innerText || '').split('\n')[0] || '').trim() : '';
+    const tweetUrl = findTweetUrl(article);
+    return {
+      text: text,
+      author: author || 'Unknown',
+      tweetUrl: tweetUrl || '',
+      statusId: parseStatusId(tweetUrl),
+    };
+  }
+
+  function extractThreadTweetsFromCurrentPage(anchorArticle, anchorData) {
+    if (!anchorArticle || !anchorData || !anchorData.author) return [];
+
+    const allArticles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+    if (allArticles.length <= 1) return [];
+
+    const anchorStatusId = parseStatusId(anchorData.tweetUrl || anchorData.sourceUrl);
+    const allItems = allArticles.map(function (article) {
+      return {
+        article: article,
+        data: extractTweetDataFromArticleFast(article),
+      };
+    }).filter(function (entry) {
+      return !!entry.data.tweetUrl;
+    });
+
+    if (allItems.length <= 1) return [];
+
+    let anchorIndex = allItems.findIndex(function (entry) {
+      if (entry.article === anchorArticle) return true;
+      if (anchorStatusId && entry.data.statusId === anchorStatusId) return true;
+      return false;
+    });
+    if (anchorIndex < 0) return [];
+
+    let left = anchorIndex;
+    let right = anchorIndex;
+    while (left - 1 >= 0 && allItems[left - 1].data.author === anchorData.author) left--;
+    while (right + 1 < allItems.length && allItems[right + 1].data.author === anchorData.author) right++;
+
+    const block = allItems.slice(left, right + 1).map(function (entry) {
+      return {
+        author: entry.data.author,
+        tweetUrl: entry.data.tweetUrl,
+        statusId: entry.data.statusId,
+        text: normalizeText(entry.data.text || ''),
+      };
+    }).filter(function (item) {
+      return !!item.text;
+    });
+
+    const deduped = dedupeThreadItems(block);
+    if (deduped.length <= 1) return [];
+    return deduped.slice(0, 20);
+  }
+
+  function dedupeThreadItems(items) {
+    const result = [];
+    const seen = new Set();
+    items.forEach(function (item) {
+      const key = item.statusId || item.tweetUrl || item.text.slice(0, 120);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      result.push(item);
+    });
+    return result;
   }
 
   function extractTweetText(article) {
@@ -280,6 +356,12 @@
     if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
     if (raw.startsWith('/')) return 'https://x.com' + raw;
     return 'https://x.com/' + raw;
+  }
+
+  function parseStatusId(url) {
+    const raw = String(url || '');
+    const m = raw.match(/\/status\/(\d+)/i);
+    return m ? m[1] : '';
   }
 
   async function fetchTextFromPage(url) {
