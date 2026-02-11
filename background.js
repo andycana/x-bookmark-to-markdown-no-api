@@ -1,5 +1,6 @@
 const HISTORY_KEY = 'xbls_saved_items';
 const HISTORY_LIMIT = 300;
+const ALLOWED_FETCH_HOSTS = ['x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'];
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (!message || !message.type) return;
@@ -15,6 +16,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     getHistory()
       .then(function (items) { sendResponse({ success: true, items: items }); })
       .catch(function (error) { sendResponse({ success: false, error: error.message || '读取失败' }); });
+    return true;
+  }
+
+  if (message.type === 'XBLS_FETCH_PAGE_TEXT') {
+    fetchPageText(message.payload && message.payload.url)
+      .then(function (text) { sendResponse({ success: true, text: text }); })
+      .catch(function (error) { sendResponse({ success: false, error: error.message || '抓取失败' }); });
     return true;
   }
 
@@ -65,7 +73,7 @@ async function pushHistory(tweetData, filePath) {
 function buildMarkdown(tweetData) {
   const text = (tweetData.text || '').trim() || '(无可提取文本，可能是图片/视频内容)';
   const author = tweetData.author || 'Unknown';
-  const source = tweetData.tweetUrl || '';
+  const source = tweetData.sourceUrl || tweetData.articleUrl || tweetData.tweetUrl || '';
   const time = formatDateTime(new Date(tweetData.timestamp || Date.now()));
 
   return [
@@ -132,4 +140,129 @@ async function saveViaDownloads(markdown, filename) {
     saveAs: false,
     conflictAction: 'uniquify',
   });
+}
+
+async function fetchPageText(url) {
+  const target = String(url || '').trim();
+  if (!target) throw new Error('URL 为空');
+
+  let parsed;
+  try {
+    parsed = new URL(target);
+  } catch (_) {
+    throw new Error('URL 无效');
+  }
+  if (!ALLOWED_FETCH_HOSTS.includes(parsed.hostname)) {
+    throw new Error('不支持的域名');
+  }
+
+  const res = await fetch(parsed.toString(), {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    throw new Error('页面抓取失败: ' + res.status);
+  }
+
+  const html = await res.text();
+  return extractMeaningfulTextFromHtml(html);
+}
+
+function extractMeaningfulTextFromHtml(html) {
+  const source = String(html || '');
+  if (!source) return '';
+
+  const candidates = [];
+
+  pushMatch(candidates, source, /"article_body"\s*:\s*"((?:\\.|[^"\\])*)"/gi, true);
+  pushMatch(candidates, source, /"full_text"\s*:\s*"((?:\\.|[^"\\])*)"/gi, true);
+  pushMatch(candidates, source, /"tweet_text"\s*:\s*"((?:\\.|[^"\\])*)"/gi, true);
+  pushMatch(candidates, source, /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["'][^>]*>/gi, false);
+  pushMatch(candidates, source, /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["'][^>]*>/gi, false);
+
+  const articleBlock = firstGroup(source.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i));
+  if (articleBlock) candidates.push(cleanHtmlText(articleBlock));
+
+  const bodyBlock = firstGroup(source.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i));
+  if (bodyBlock) candidates.push(cleanHtmlText(bodyBlock));
+
+  const filtered = [];
+  const seen = new Set();
+  candidates.forEach(function (entry) {
+    const normalized = normalizeExtractedText(entry);
+    if (!normalized) return;
+    if (normalized.length < 20) return;
+    if (/^log in|^sign up|cookies|terms|privacy/i.test(normalized)) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    filtered.push(normalized);
+  });
+
+  if (filtered.length === 0) return '';
+
+  filtered.sort(function (a, b) { return b.length - a.length; });
+  return filtered[0].slice(0, 20000);
+}
+
+function pushMatch(target, source, regex, isJsonEscaped) {
+  let match;
+  while ((match = regex.exec(source)) !== null) {
+    const value = (match[1] || '').trim();
+    if (!value) continue;
+    target.push(isJsonEscaped ? decodeJsonEscapes(value) : decodeHtmlEntities(value));
+  }
+}
+
+function firstGroup(match) {
+  if (!match || !match[1]) return '';
+  return match[1];
+}
+
+function decodeJsonEscapes(text) {
+  const value = String(text || '');
+  return value
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
+    .replace(/\\u([0-9a-fA-F]{4})/g, function (_, hex) {
+      try {
+        return String.fromCharCode(parseInt(hex, 16));
+      } catch (_) {
+        return '';
+      }
+    });
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+function cleanHtmlText(fragment) {
+  return decodeHtmlEntities(
+    String(fragment || '')
+      .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+  );
+}
+
+function normalizeExtractedText(text) {
+  return String(text || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
