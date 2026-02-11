@@ -21,7 +21,7 @@ Turn X/Twitter bookmarks into local Markdown instantly.
 1. 打开 `chrome://extensions/`
 2. 开启右上角「开发者模式」
 3. 点击「加载已解压的扩展程序」
-4. 选择目录：`extensions/x-bookmark-local`
+4. 选择本仓库根目录（解压后包含 `manifest.json` 的目录）
 
 ### 使用
 
@@ -81,7 +81,7 @@ A fully local Chrome extension that saves bookmarked posts from X/Twitter to Mar
 1. Open `chrome://extensions/`
 2. Enable **Developer mode**
 3. Click **Load unpacked**
-4. Select `extensions/x-bookmark-local`
+4. Select the repository root (the folder containing `manifest.json`)
 
 ### Usage
 
