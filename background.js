@@ -1,6 +1,7 @@
 const HISTORY_KEY = 'xbls_saved_items';
 const HISTORY_LIMIT = 300;
 const ALLOWED_FETCH_HOSTS = ['x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'];
+const MAX_IMAGE_DOWNLOADS = 20;
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (!message || !message.type) return;
@@ -40,12 +41,13 @@ async function handleSaveMarkdown(payload) {
   }
 
   const tweetData = payload.tweetData;
-  const markdown = buildMarkdown(tweetData);
   const fileName = buildFileName(tweetData);
+  const imageDownloads = await downloadImagesForTweet(tweetData, fileName);
+  const markdown = buildMarkdown(tweetData, imageDownloads);
   const fullPath = 'x-bookmark-local/' + fileName;
 
   await saveViaDownloads(markdown, fullPath);
-  await pushHistory(tweetData, fullPath);
+  await pushHistory(tweetData, fullPath, imageDownloads);
   return { path: 'Downloads/' + fullPath };
 }
 
@@ -54,8 +56,11 @@ async function getHistory() {
   return data[HISTORY_KEY];
 }
 
-async function pushHistory(tweetData, filePath) {
+async function pushHistory(tweetData, filePath, imageDownloads) {
   const list = await getHistory();
+  const imageCount = imageDownloads && Array.isArray(imageDownloads.downloaded)
+    ? imageDownloads.downloaded.length
+    : 0;
   const entry = {
     id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
     timestamp: Date.now(),
@@ -63,6 +68,7 @@ async function pushHistory(tweetData, filePath) {
     tweetUrl: tweetData.tweetUrl || '',
     preview: (tweetData.text || '').slice(0, 180),
     filePath: filePath,
+    imageCount: imageCount,
   };
 
   list.unshift(entry);
@@ -70,13 +76,15 @@ async function pushHistory(tweetData, filePath) {
   await chrome.storage.local.set({ [HISTORY_KEY]: trimmed });
 }
 
-function buildMarkdown(tweetData) {
+function buildMarkdown(tweetData, imageDownloads) {
   const threadItems = normalizeThreadItems(tweetData.threadItems);
   const firstThreadText = threadItems.length > 0 ? threadItems[0].text : '';
   const text = (tweetData.text || '').trim() || firstThreadText || '(无可提取文本，可能是图片/视频内容)';
   const author = tweetData.author || 'Unknown';
   const source = tweetData.sourceUrl || tweetData.articleUrl || tweetData.tweetUrl || '';
   const time = formatDateTime(new Date(tweetData.timestamp || Date.now()));
+  const downloadedImages = imageDownloads && Array.isArray(imageDownloads.downloaded) ? imageDownloads.downloaded : [];
+  const failedImages = imageDownloads && Array.isArray(imageDownloads.failed) ? imageDownloads.failed : [];
   const lines = [
     '# X Bookmarked Post',
     '',
@@ -92,6 +100,31 @@ function buildMarkdown(tweetData) {
     '',
   ];
 
+  if (downloadedImages.length > 0 || failedImages.length > 0) {
+    lines.push('---');
+    lines.push('');
+    lines.push('## Images');
+    lines.push('');
+
+    downloadedImages.forEach(function (item, index) {
+      lines.push('### Image ' + (index + 1));
+      lines.push('![' + (item.alt || ('image-' + (index + 1))) + '](' + item.localPath + ')');
+      lines.push('- Source: ' + item.url);
+      if (item.fromThread && item.threadIndex) {
+        lines.push('- From Thread Post: #' + item.threadIndex);
+      }
+      lines.push('');
+    });
+
+    if (failedImages.length > 0) {
+      lines.push('### Failed Downloads');
+      failedImages.forEach(function (item) {
+        lines.push('- ' + item.url + ' (' + (item.error || 'download_failed') + ')');
+      });
+      lines.push('');
+    }
+  }
+
   if (threadItems.length > 1) {
     lines.push('---');
     lines.push('');
@@ -102,7 +135,11 @@ function buildMarkdown(tweetData) {
       lines.push('### ' + (index + 1) + '. ' + (item.author || author));
       if (item.tweetUrl) lines.push('> Source: ' + item.tweetUrl);
       lines.push('');
-      lines.push(item.text);
+      lines.push(item.text || '(image-only post)');
+      if (Array.isArray(item.imageUrls) && item.imageUrls.length > 0) {
+        lines.push('');
+        lines.push('> Images: ' + item.imageUrls.length);
+      }
       lines.push('');
     });
   }
@@ -118,20 +155,164 @@ function normalizeThreadItems(rawItems) {
   rawItems.forEach(function (item) {
     if (!item || typeof item !== 'object') return;
     const text = String(item.text || '').trim();
-    if (!text) return;
+    const imageUrls = normalizeImageUrls(item.imageUrls);
+    if (!text && imageUrls.length === 0) return;
     const author = String(item.author || 'Unknown').trim() || 'Unknown';
     const tweetUrl = String(item.tweetUrl || '').trim();
-    const key = (item.statusId ? String(item.statusId) : '') || tweetUrl || text.slice(0, 120);
+    const key = (item.statusId ? String(item.statusId) : '') || tweetUrl || text.slice(0, 120) || imageUrls[0];
     if (!key || seen.has(key)) return;
     seen.add(key);
     result.push({
       text: text,
       author: author,
       tweetUrl: tweetUrl,
+      imageUrls: imageUrls,
     });
   });
 
   return result.slice(0, 20);
+}
+
+async function downloadImagesForTweet(tweetData, markdownFileName) {
+  const targets = collectImageTargets(tweetData);
+  if (targets.length === 0) {
+    return { downloaded: [], failed: [] };
+  }
+
+  const baseName = sanitizeFilePart(String(markdownFileName || '').replace(/\.md$/i, ''));
+  const runTag = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  const downloaded = [];
+  const failed = [];
+
+  for (let index = 0; index < targets.length; index += 1) {
+    const target = targets[index];
+    const ext = detectImageExtension(target.url);
+    const mediaName = baseName + '_' + runTag + '_' + pad(index + 1) + ext;
+    const mediaPath = 'x-bookmark-local/media/' + mediaName;
+
+    try {
+      await chrome.downloads.download({
+        url: target.url,
+        filename: mediaPath,
+        saveAs: false,
+        conflictAction: 'uniquify',
+      });
+      downloaded.push({
+        url: target.url,
+        localPath: 'media/' + mediaName,
+        alt: target.alt || ('image-' + (index + 1)),
+        fromThread: !!target.fromThread,
+        threadIndex: target.threadIndex || 0,
+      });
+    } catch (error) {
+      failed.push({
+        url: target.url,
+        error: error && error.message ? error.message : 'download_failed',
+      });
+    }
+  }
+
+  return { downloaded: downloaded, failed: failed };
+}
+
+function collectImageTargets(tweetData) {
+  const targets = [];
+  const seen = new Set();
+
+  function pushTarget(url, meta) {
+    const normalized = normalizeImageUrl(url);
+    if (!normalized) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    targets.push({
+      url: normalized,
+      alt: meta && meta.alt ? meta.alt : '',
+      fromThread: !!(meta && meta.fromThread),
+      threadIndex: meta && meta.threadIndex ? meta.threadIndex : 0,
+    });
+  }
+
+  const primaryImages = normalizeImageUrls(tweetData && tweetData.imageUrls);
+  primaryImages.forEach(function (url, index) {
+    pushTarget(url, { alt: 'post-image-' + (index + 1), fromThread: false, threadIndex: 0 });
+  });
+
+  const threadItems = normalizeThreadItems(tweetData && tweetData.threadItems);
+  threadItems.forEach(function (item, threadIndex) {
+    const imageUrls = normalizeImageUrls(item.imageUrls);
+    imageUrls.forEach(function (url, imageIndex) {
+      pushTarget(url, {
+        alt: 'thread-' + (threadIndex + 1) + '-image-' + (imageIndex + 1),
+        fromThread: true,
+        threadIndex: threadIndex + 1,
+      });
+    });
+  });
+
+  return targets.slice(0, MAX_IMAGE_DOWNLOADS);
+}
+
+function normalizeImageUrls(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const result = [];
+  const seen = new Set();
+
+  raw.forEach(function (item) {
+    const normalized = normalizeImageUrl(item);
+    if (!normalized) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(normalized);
+  });
+
+  return result;
+}
+
+function normalizeImageUrl(urlLike) {
+  const raw = String(urlLike || '').trim();
+  if (!raw) return '';
+
+  try {
+    const parsed = new URL(raw, 'https://x.com');
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+
+    if (parsed.hostname.includes('twimg.com')) {
+      if (parsed.searchParams.has('name')) {
+        parsed.searchParams.set('name', 'orig');
+      } else if (parsed.pathname.includes('/media/')) {
+        parsed.searchParams.set('name', 'orig');
+      }
+    }
+
+    return parsed.toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+function detectImageExtension(urlLike) {
+  const fallbackExt = '.jpg';
+  const allowExtSet = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
+
+  try {
+    const parsed = new URL(String(urlLike || ''));
+    const format = (parsed.searchParams.get('format') || '').toLowerCase();
+    if (allowExtSet.has(format)) {
+      return '.' + (format === 'jpeg' ? 'jpg' : format);
+    }
+
+    const pathMatch = parsed.pathname.match(/\.([a-zA-Z0-9]{3,4})(?:$|\?)/);
+    if (pathMatch) {
+      const ext = pathMatch[1].toLowerCase();
+      if (allowExtSet.has(ext)) {
+        return '.' + (ext === 'jpeg' ? 'jpg' : ext);
+      }
+    }
+  } catch (_) {
+    return fallbackExt;
+  }
+
+  return fallbackExt;
 }
 
 function buildFileName(tweetData) {

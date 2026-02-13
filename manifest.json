@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X Bookmark → Markdown (No API)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Save X bookmarked posts to local Markdown immediately. No API, no key, no model calls.",
   "permissions": [
     "storage",

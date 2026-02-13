@@ -23,9 +23,10 @@
 
       await expandShowMore(tweetArticle);
       const tweetData = await extractTweetData(tweetArticle);
-      if (!tweetData.text && !tweetData.sourceUrl) return;
+      const hasImages = Array.isArray(tweetData.imageUrls) && tweetData.imageUrls.length > 0;
+      if (!tweetData.text && !tweetData.sourceUrl && !hasImages) return;
 
-      if (!tweetData.text) {
+      if (!tweetData.text && !hasImages) {
         showToast('未提取到正文，请打开帖子详情页后重试', 'error');
         return;
       }
@@ -71,6 +72,9 @@
   function buildDedupeKey(tweetData) {
     if (tweetData.sourceUrl) return tweetData.sourceUrl;
     if (tweetData.tweetUrl) return tweetData.tweetUrl;
+    if (Array.isArray(tweetData.imageUrls) && tweetData.imageUrls.length > 0) {
+      return 'image|' + tweetData.imageUrls[0];
+    }
     const shortText = (tweetData.text || '').slice(0, 120);
     return (tweetData.author || 'unknown') + '|' + shortText;
   }
@@ -125,6 +129,7 @@
     let text = extractTweetText(article);
     const cardText = extractCardText(article);
     if (!text && cardText) text = cardText;
+    const imageUrls = extractImageUrls(article);
 
     const userNameRoot = article.querySelector('[data-testid="User-Name"]');
     const author = userNameRoot ? ((userNameRoot.innerText || '').split('\n')[0] || '').trim() : '';
@@ -150,17 +155,20 @@
       tweetUrl: tweetUrl || '',
       articleUrl: articleUrl || '',
       sourceUrl: sourceUrl,
+      imageUrls: imageUrls,
       timestamp: Date.now(),
     };
   }
 
   function extractTweetDataFromArticleFast(article) {
     const text = extractTweetText(article) || extractCardText(article) || '';
+    const imageUrls = extractImageUrls(article);
     const userNameRoot = article.querySelector('[data-testid="User-Name"]');
     const author = userNameRoot ? ((userNameRoot.innerText || '').split('\n')[0] || '').trim() : '';
     const tweetUrl = findTweetUrl(article);
     return {
       text: text,
+      imageUrls: imageUrls,
       author: author || 'Unknown',
       tweetUrl: tweetUrl || '',
       statusId: parseStatusId(tweetUrl),
@@ -203,9 +211,10 @@
         tweetUrl: entry.data.tweetUrl,
         statusId: entry.data.statusId,
         text: normalizeText(entry.data.text || ''),
+        imageUrls: normalizeImageUrlList(entry.data.imageUrls),
       };
     }).filter(function (item) {
-      return !!item.text;
+      return !!item.text || (Array.isArray(item.imageUrls) && item.imageUrls.length > 0);
     });
 
     const deduped = dedupeThreadItems(block);
@@ -217,10 +226,18 @@
     const result = [];
     const seen = new Set();
     items.forEach(function (item) {
-      const key = item.statusId || item.tweetUrl || item.text.slice(0, 120);
+      const text = normalizeText(item.text || '');
+      const imageUrls = normalizeImageUrlList(item.imageUrls);
+      const key = item.statusId || item.tweetUrl || text.slice(0, 120) || imageUrls[0];
       if (!key || seen.has(key)) return;
       seen.add(key);
-      result.push(item);
+      result.push({
+        author: item.author || 'Unknown',
+        tweetUrl: item.tweetUrl || '',
+        statusId: item.statusId || '',
+        text: text,
+        imageUrls: imageUrls,
+      });
     });
     return result;
   }
@@ -348,6 +365,90 @@
     });
 
     return chunks.join('\n').trim();
+  }
+
+  function extractImageUrls(article) {
+    const nodes = article.querySelectorAll('img, source');
+    const candidates = [];
+
+    nodes.forEach(function (node) {
+      if (!node || !node.getAttribute) return;
+      addImageCandidate(candidates, node.currentSrc || '', node);
+      addImageCandidate(candidates, node.getAttribute('src') || '', node);
+      addImageCandidate(candidates, pickBestSrcFromSrcset(node.getAttribute('srcset') || ''), node);
+    });
+
+    return normalizeImageUrlList(candidates);
+  }
+
+  function addImageCandidate(target, urlLike, node) {
+    const normalized = normalizeMediaUrl(urlLike);
+    if (!normalized) return;
+    if (!isLikelyTweetImage(normalized, node)) return;
+    target.push(normalized);
+  }
+
+  function pickBestSrcFromSrcset(srcset) {
+    const raw = String(srcset || '').trim();
+    if (!raw) return '';
+    const parts = raw.split(',').map(function (part) { return part.trim(); }).filter(Boolean);
+    if (parts.length === 0) return '';
+    const last = parts[parts.length - 1];
+    return (last.split(/\s+/)[0] || '').trim();
+  }
+
+  function isLikelyTweetImage(url, node) {
+    const lower = String(url || '').toLowerCase();
+    if (!lower) return false;
+    if (lower.startsWith('data:')) return false;
+    if (lower.includes('/profile_images/') || lower.includes('/profile_banners/')) return false;
+    if (lower.includes('/emoji/') || lower.includes('/abs-emoji/')) return false;
+
+    if (node && node.closest && node.closest('[data-testid="tweetPhoto"]')) return true;
+    if (node && node.closest && node.closest('[data-testid="card.wrapper"]')) return true;
+
+    if (lower.includes('pbs.twimg.com/media/')) return true;
+    if (lower.includes('pbs.twimg.com/tweet_video_thumb/')) return true;
+    if (lower.includes('pbs.twimg.com/ext_tw_video_thumb/')) return true;
+    return false;
+  }
+
+  function normalizeMediaUrl(urlLike) {
+    const raw = String(urlLike || '').trim();
+    if (!raw) return '';
+
+    try {
+      const parsed = new URL(raw, window.location.origin);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+
+      if (parsed.hostname.includes('twimg.com')) {
+        if (parsed.searchParams.has('name')) {
+          parsed.searchParams.set('name', 'orig');
+        } else if (parsed.pathname.includes('/media/')) {
+          parsed.searchParams.set('name', 'orig');
+        }
+      }
+
+      return parsed.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function normalizeImageUrlList(items) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+    const result = [];
+    const seen = new Set();
+
+    items.forEach(function (item) {
+      const normalized = normalizeMediaUrl(item);
+      if (!normalized) return;
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+      result.push(normalized);
+    });
+
+    return result.slice(0, 12);
   }
 
   function normalizeUrl(urlLike) {
