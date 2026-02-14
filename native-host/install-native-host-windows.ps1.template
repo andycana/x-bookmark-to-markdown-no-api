@@ -1,0 +1,44 @@
+$ErrorActionPreference = 'Stop'
+
+$HostName = '__HOST_NAME__'
+$ExtensionId = '__EXTENSION_ID__'
+$PythonScriptBase64 = '__PY_BASE64__'
+
+$InstallDir = Join-Path $env:LOCALAPPDATA 'xbls-native-host'
+$PythonScriptPath = Join-Path $InstallDir 'xbls_native_host.py'
+$LauncherPath = Join-Path $InstallDir 'xbls_native_host.cmd'
+$ManifestPath = Join-Path $InstallDir ($HostName + '.json')
+
+if (Get-Command py -ErrorAction SilentlyContinue) {
+  $PythonCommand = 'py -3'
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+  $PythonCommand = 'python'
+} else {
+  throw 'Python 3 is required. Install Python first, then run this script again.'
+}
+
+New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+
+$PythonScript = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($PythonScriptBase64))
+Set-Content -Path $PythonScriptPath -Value $PythonScript -Encoding UTF8
+
+$launcher = "@echo off`r`n" + $PythonCommand + " `"" + $PythonScriptPath + "`"`r`n"
+Set-Content -Path $LauncherPath -Value $launcher -Encoding Ascii
+
+$manifest = @{
+  name = $HostName
+  description = 'Native host for X Bookmark Local'
+  path = $LauncherPath
+  type = 'stdio'
+  allowed_origins = @("chrome-extension://$ExtensionId/")
+} | ConvertTo-Json -Depth 4
+
+Set-Content -Path $ManifestPath -Value $manifest -Encoding UTF8
+
+& reg.exe add "HKCU\Software\Google\Chrome\NativeMessagingHosts\$HostName" /ve /t REG_SZ /d "$ManifestPath" /f | Out-Null
+& reg.exe add "HKCU\Software\Microsoft\Edge\NativeMessagingHosts\$HostName" /ve /t REG_SZ /d "$ManifestPath" /f | Out-Null
+
+Write-Host ''
+Write-Host 'Native helper installed successfully.'
+Write-Host "Manifest: $ManifestPath"
+Write-Host 'Restart Chrome/Edge, then return to extension popup and click "Choose Folder".'

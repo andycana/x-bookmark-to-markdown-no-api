@@ -78,6 +78,24 @@ Default output directory:
 - `Downloads/x-bookmark-local/`
 - `Downloads/x-bookmark-local/media/` (downloaded images)
 
+Custom output directory (new):
+
+1. Open the extension popup
+2. Set **Download directory (relative to Downloads)**
+3. Click **Save directory**
+
+Example: `my-notes/x-bookmarks`
+- Markdown: `Downloads/my-notes/x-bookmarks/`
+- Images: `Downloads/my-notes/x-bookmarks/media/`
+
+Absolute folder mode (Native helper):
+
+1. Open popup -> click **Download Installer**
+2. Run `Downloads/install-xbls-native-host.ps1` in PowerShell
+3. Restart Chrome/Edge
+4. Open popup -> click **Choose Folder**
+5. From now on, files are written directly to that folder (not limited to Downloads)
+
 ### Privacy
 
 - No external AI request

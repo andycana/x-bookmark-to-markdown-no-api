@@ -6,12 +6,14 @@
   const UI_NOISE_RE = /^(show more|show this thread|show replies|translate post|view|views|reply|repost|like|bookmark|share|follow|more|显示更多|查看帖子分析|回复|转发|点赞|分享|关注|更多)$/i;
   const TOAST_CONTAINER_ID = 'xbls-toast-container';
   const RECENT_SAVE_COOLDOWN_MS = 3500;
+  const AUTO_SAVE_KEY = 'xbls_auto_save_enabled';
   const recentSavedMap = new Map();
 
-  document.addEventListener('click', function (event) {
+  document.addEventListener('click', async function (event) {
     const bookmarkAction = findBookmarkActionElement(event.target);
     if (!bookmarkAction) return;
     if (isRemoveBookmarkAction(bookmarkAction)) return;
+    if (!(await isAutoSaveEnabled())) return;
 
     processBookmarkAction(bookmarkAction);
   }, true);
@@ -60,7 +62,8 @@
           return;
         }
         if (response && response.success) {
-          showToast('已保存到 Downloads/x-bookmark-local', 'success');
+          const savedPath = response.path || 'Downloads/x-bookmark-local';
+          showToast('已保存到 ' + savedPath, 'success');
         } else {
           rollbackSaved(dedupeKey);
           showToast((response && response.error) ? response.error : '保存失败', 'error');
@@ -90,6 +93,15 @@
 
   function rollbackSaved(key) {
     recentSavedMap.delete(key);
+  }
+
+  async function isAutoSaveEnabled() {
+    try {
+      const data = await chrome.storage.local.get({ [AUTO_SAVE_KEY]: true });
+      return data[AUTO_SAVE_KEY] !== false;
+    } catch (_) {
+      return true;
+    }
   }
 
   function findBookmarkActionElement(el) {

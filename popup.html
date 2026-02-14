@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,15 +8,51 @@
   </head>
   <body>
     <main class="popup">
-      <h1>收藏即存档</h1>
-      <p class="desc">不调用任何 AI API。你在 X 点收藏后会自动保存 Markdown 到下载目录。</p>
+      <h1>X Bookmark Local Saver</h1>
+      <p class="desc">Bookmark a post on X, then save Markdown locally without calling any AI API.</p>
+
+      <section class="setting-row">
+        <div class="setting-text">
+          <div class="setting-title">Auto save when bookmarked</div>
+          <div id="autoSaveStatus" class="setting-status">Current: ON</div>
+        </div>
+        <label class="switch" for="autoSaveToggle" aria-label="Auto save toggle">
+          <input id="autoSaveToggle" type="checkbox" checked />
+          <span class="slider"></span>
+        </label>
+      </section>
+
+      <section class="folder-setting">
+        <div class="setting-title">Downloads subfolder (fallback mode)</div>
+        <div class="folder-input-row">
+          <span class="folder-prefix">Downloads/</span>
+          <input id="downloadDirInput" type="text" placeholder="x-bookmark-local" spellcheck="false" />
+        </div>
+        <div class="folder-actions">
+          <button id="saveDirBtn" type="button">Save</button>
+          <button id="resetDirBtn" type="button" class="ghost">Reset</button>
+        </div>
+        <div id="downloadDirStatus" class="setting-status">Current: Downloads/x-bookmark-local</div>
+      </section>
+
+      <section class="folder-setting native-setting">
+        <div class="setting-title">Any folder mode (Native helper)</div>
+        <div id="nativeStatus" class="setting-status">Helper: Checking...</div>
+        <div id="nativeFolderStatus" class="setting-status">Folder: Not selected</div>
+        <div class="folder-actions">
+          <button id="pickNativeFolderBtn" type="button">Choose Folder</button>
+          <button id="clearNativeFolderBtn" type="button" class="ghost">Clear</button>
+          <button id="installNativeBtn" type="button" class="ghost">Download Installer</button>
+        </div>
+        <div id="nativeHint" class="hint">Install helper once, run the PowerShell script, restart browser, then choose a folder.</div>
+      </section>
 
       <div class="stats">
-        <span id="countText">已保存 0 条</span>
-        <button id="clearBtn" type="button">清空记录</button>
+        <span id="countText">Saved 0 items</span>
+        <button id="clearBtn" type="button">Clear History</button>
       </div>
 
-      <div id="empty" class="empty">暂无保存记录</div>
+      <div id="empty" class="empty">No saved items yet.</div>
       <div id="list" class="list"></div>
     </main>
     <script src="popup.js"></script>

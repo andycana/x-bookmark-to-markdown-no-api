@@ -1,5 +1,9 @@
 const HISTORY_KEY = 'xbls_saved_items';
 const HISTORY_LIMIT = 300;
+const DOWNLOAD_DIR_KEY = 'xbls_download_dir';
+const DEFAULT_DOWNLOAD_DIR = 'x-bookmark-local';
+const NATIVE_FOLDER_KEY = 'xbls_native_folder_path';
+const NATIVE_HOST_NAME = 'com.xbookmark.local';
 const ALLOWED_FETCH_HOSTS = ['x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'];
 const MAX_IMAGE_DOWNLOADS = 20;
 
@@ -9,42 +13,85 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (message.type === 'XBLS_SAVE_MARKDOWN') {
     handleSaveMarkdown(message.payload)
       .then(function (result) { sendResponse({ success: true, path: result.path }); })
-      .catch(function (error) { sendResponse({ success: false, error: error.message || '保存失败' }); });
+      .catch(function (error) { sendResponse({ success: false, error: error.message || 'save failed' }); });
     return true;
   }
 
   if (message.type === 'XBLS_GET_HISTORY') {
     getHistory()
       .then(function (items) { sendResponse({ success: true, items: items }); })
-      .catch(function (error) { sendResponse({ success: false, error: error.message || '读取失败' }); });
+      .catch(function (error) { sendResponse({ success: false, error: error.message || 'read history failed' }); });
     return true;
   }
 
   if (message.type === 'XBLS_FETCH_PAGE_TEXT') {
     fetchPageText(message.payload && message.payload.url)
       .then(function (text) { sendResponse({ success: true, text: text }); })
-      .catch(function (error) { sendResponse({ success: false, error: error.message || '抓取失败' }); });
+      .catch(function (error) { sendResponse({ success: false, error: error.message || 'fetch page failed' }); });
+    return true;
+  }
+
+  if (message.type === 'XBLS_GET_NATIVE_STATUS') {
+    getNativeStatus()
+      .then(function (status) { sendResponse({ success: true, status: status }); })
+      .catch(function (error) { sendResponse({ success: false, error: error.message || 'native status failed' }); });
+    return true;
+  }
+
+  if (message.type === 'XBLS_PICK_NATIVE_FOLDER') {
+    pickNativeFolder()
+      .then(function (result) { sendResponse({ success: true, path: result.path }); })
+      .catch(function (error) { sendResponse({ success: false, error: error.message || 'pick folder failed' }); });
+    return true;
+  }
+
+  if (message.type === 'XBLS_CLEAR_NATIVE_FOLDER') {
+    clearNativeFolder()
+      .then(function () { sendResponse({ success: true }); })
+      .catch(function (error) { sendResponse({ success: false, error: error.message || 'clear folder failed' }); });
     return true;
   }
 
   if (message.type === 'XBLS_CLEAR_HISTORY') {
     chrome.storage.local.set({ [HISTORY_KEY]: [] })
       .then(function () { sendResponse({ success: true }); })
-      .catch(function (error) { sendResponse({ success: false, error: error.message || '清空失败' }); });
+      .catch(function (error) { sendResponse({ success: false, error: error.message || 'clear history failed' }); });
     return true;
   }
 });
 
 async function handleSaveMarkdown(payload) {
   if (!payload || !payload.tweetData) {
-    throw new Error('无效内容');
+    throw new Error('invalid content');
   }
 
   const tweetData = payload.tweetData;
   const fileName = buildFileName(tweetData);
-  const imageDownloads = await downloadImagesForTweet(tweetData, fileName);
+  const nativeFolderPath = await getNativeFolderPath();
+
+  if (nativeFolderPath) {
+    const nativeReady = await isNativeHostReady();
+    if (!nativeReady) {
+      throw new Error('Native helper is not ready. Please install helper from popup first.');
+    }
+
+    const imageDownloads = await downloadImagesForTweet(tweetData, fileName, {
+      mode: 'native',
+      folderPath: nativeFolderPath,
+    });
+    const markdown = buildMarkdown(tweetData, imageDownloads);
+    const savedPath = await saveViaNative(markdown, fileName, nativeFolderPath);
+    await pushHistory(tweetData, savedPath, imageDownloads);
+    return { path: savedPath };
+  }
+
+  const downloadDir = await getDownloadDir();
+  const imageDownloads = await downloadImagesForTweet(tweetData, fileName, {
+    mode: 'downloads',
+    downloadDir: downloadDir,
+  });
   const markdown = buildMarkdown(tweetData, imageDownloads);
-  const fullPath = 'x-bookmark-local/' + fileName;
+  const fullPath = downloadDir + '/' + fileName;
 
   await saveViaDownloads(markdown, fullPath);
   await pushHistory(tweetData, fullPath, imageDownloads);
@@ -79,7 +126,7 @@ async function pushHistory(tweetData, filePath, imageDownloads) {
 function buildMarkdown(tweetData, imageDownloads) {
   const threadItems = normalizeThreadItems(tweetData.threadItems);
   const firstThreadText = threadItems.length > 0 ? threadItems[0].text : '';
-  const text = (tweetData.text || '').trim() || firstThreadText || '(无可提取文本，可能是图片/视频内容)';
+  const text = (tweetData.text || '').trim() || firstThreadText || '(鏃犲彲鎻愬彇鏂囨湰锛屽彲鑳芥槸鍥剧墖/瑙嗛鍐呭)';
   const author = tweetData.author || 'Unknown';
   const source = tweetData.sourceUrl || tweetData.articleUrl || tweetData.tweetUrl || '';
   const time = formatDateTime(new Date(tweetData.timestamp || Date.now()));
@@ -173,7 +220,7 @@ function normalizeThreadItems(rawItems) {
   return result.slice(0, 20);
 }
 
-async function downloadImagesForTweet(tweetData, markdownFileName) {
+async function downloadImagesForTweet(tweetData, markdownFileName, saveTarget) {
   const targets = collectImageTargets(tweetData);
   if (targets.length === 0) {
     return { downloaded: [], failed: [] };
@@ -188,18 +235,23 @@ async function downloadImagesForTweet(tweetData, markdownFileName) {
     const target = targets[index];
     const ext = detectImageExtension(target.url);
     const mediaName = baseName + '_' + runTag + '_' + pad(index + 1) + ext;
-    const mediaPath = 'x-bookmark-local/media/' + mediaName;
+    const relativePath = 'media/' + mediaName;
 
     try {
-      await chrome.downloads.download({
-        url: target.url,
-        filename: mediaPath,
-        saveAs: false,
-        conflictAction: 'uniquify',
-      });
+      if (saveTarget && saveTarget.mode === 'native') {
+        await downloadImageViaNative(target.url, relativePath, saveTarget.folderPath);
+      } else {
+        const mediaPath = saveTarget.downloadDir + '/' + relativePath;
+        await chrome.downloads.download({
+          url: target.url,
+          filename: mediaPath,
+          saveAs: false,
+          conflictAction: 'uniquify',
+        });
+      }
       downloaded.push({
         url: target.url,
-        localPath: 'media/' + mediaName,
+        localPath: relativePath,
         alt: target.alt || ('image-' + (index + 1)),
         fromThread: !!target.fromThread,
         threadIndex: target.threadIndex || 0,
@@ -315,6 +367,102 @@ function detectImageExtension(urlLike) {
   return fallbackExt;
 }
 
+
+async function getDownloadDir() {
+  try {
+    const data = await chrome.storage.local.get({ [DOWNLOAD_DIR_KEY]: DEFAULT_DOWNLOAD_DIR });
+    return normalizeDownloadDir(data[DOWNLOAD_DIR_KEY]);
+  } catch (_) {
+    return DEFAULT_DOWNLOAD_DIR;
+  }
+}
+
+async function getNativeFolderPath() {
+  try {
+    const data = await chrome.storage.local.get({ [NATIVE_FOLDER_KEY]: '' });
+    return normalizeNativeFolderPath(data[NATIVE_FOLDER_KEY]);
+  } catch (_) {
+    return '';
+  }
+}
+
+function normalizeNativeFolderPath(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return '';
+  if (raw.indexOf('\u0000') !== -1) return '';
+  return raw;
+}
+
+async function getNativeStatus() {
+  const folderPath = await getNativeFolderPath();
+  const helperReady = await isNativeHostReady();
+  return {
+    helperReady: helperReady,
+    folderPath: folderPath,
+    hostName: NATIVE_HOST_NAME,
+  };
+}
+
+async function pickNativeFolder() {
+  const response = await sendNativeHostMessage({ action: 'pick_folder' });
+  if (!response || !response.success || !response.path) {
+    throw new Error((response && response.error) || 'Folder selection cancelled.');
+  }
+
+  const folderPath = normalizeNativeFolderPath(response.path);
+  if (!folderPath) {
+    throw new Error('Invalid folder path from native helper.');
+  }
+
+  await chrome.storage.local.set({ [NATIVE_FOLDER_KEY]: folderPath });
+  return { path: folderPath };
+}
+
+async function clearNativeFolder() {
+  await chrome.storage.local.set({ [NATIVE_FOLDER_KEY]: '' });
+}
+
+async function isNativeHostReady() {
+  try {
+    const response = await sendNativeHostMessage({ action: 'ping' });
+    return !!(response && response.success);
+  } catch (_) {
+    return false;
+  }
+}
+
+function sendNativeHostMessage(message) {
+  return new Promise(function (resolve, reject) {
+    chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message, function (response) {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response || null);
+    });
+  });
+}
+
+function normalizeDownloadDir(rawValue) {
+  const raw = String(rawValue || '').trim().replace(/\\/g, '/');
+  if (!raw) return DEFAULT_DOWNLOAD_DIR;
+
+  const parts = raw
+    .split('/')
+    .map(function (part) { return sanitizeDirectoryPart(part); })
+    .filter(function (part) { return part && part !== '.' && part !== '..'; });
+
+  if (parts.length === 0) return DEFAULT_DOWNLOAD_DIR;
+  return parts.slice(0, 6).join('/');
+}
+
+function sanitizeDirectoryPart(value) {
+  return String(value || '')
+    .replace(/[<>:\"/\\|?*\u0000-\u001F]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/^\.+$/, '')
+    .slice(0, 40);
+}
 function buildFileName(tweetData) {
   const date = new Date(tweetData.timestamp || Date.now());
   const datePart = [
@@ -365,18 +513,43 @@ async function saveViaDownloads(markdown, filename) {
   });
 }
 
+async function saveViaNative(markdown, relativePath, folderPath) {
+  const response = await sendNativeHostMessage({
+    action: 'write_text_file',
+    folder_path: folderPath,
+    relative_path: relativePath,
+    content: markdown,
+  });
+  if (!response || !response.success) {
+    throw new Error((response && response.error) || 'native write failed');
+  }
+  return response.path || (folderPath + '/' + relativePath);
+}
+
+async function downloadImageViaNative(url, relativePath, folderPath) {
+  const response = await sendNativeHostMessage({
+    action: 'download_url_to_file',
+    folder_path: folderPath,
+    relative_path: relativePath,
+    url: url,
+  });
+  if (!response || !response.success) {
+    throw new Error((response && response.error) || 'native image download failed');
+  }
+}
+
 async function fetchPageText(url) {
   const target = String(url || '').trim();
-  if (!target) throw new Error('URL 为空');
+  if (!target) throw new Error('URL is empty');
 
   let parsed;
   try {
     parsed = new URL(target);
   } catch (_) {
-    throw new Error('URL 无效');
+    throw new Error('URL is invalid');
   }
   if (!ALLOWED_FETCH_HOSTS.includes(parsed.hostname)) {
-    throw new Error('不支持的域名');
+    throw new Error('Unsupported host');
   }
 
   const res = await fetch(parsed.toString(), {
@@ -384,7 +557,7 @@ async function fetchPageText(url) {
     credentials: 'include',
   });
   if (!res.ok) {
-    throw new Error('页面抓取失败: ' + res.status);
+    throw new Error('Page fetch failed: ' + res.status);
   }
 
   const html = await res.text();

@@ -5,7 +5,8 @@
   "description": "Save X bookmarked posts to local Markdown immediately. No API, no key, no model calls.",
   "permissions": [
     "storage",
-    "downloads"
+    "downloads",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://x.com/*",
