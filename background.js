@@ -2,6 +2,10 @@ const HISTORY_KEY = 'xbls_saved_items';
 const HISTORY_LIMIT = 300;
 const DOWNLOAD_DIR_KEY = 'xbls_download_dir';
 const DEFAULT_DOWNLOAD_DIR = 'x-bookmark-local';
+const DOWNLOAD_IMAGES_KEY = 'xbls_download_images_enabled';
+const DEFAULT_DOWNLOAD_IMAGES_ENABLED = false;
+const MEDIA_LAYOUT_KEY = 'xbls_media_layout';
+const DEFAULT_MEDIA_LAYOUT = 'subfolder';
 const NATIVE_FOLDER_KEY = 'xbls_native_folder_path';
 const NATIVE_HOST_NAME = 'com.xbookmark.local';
 const ALLOWED_FETCH_HOSTS = ['x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'];
@@ -67,6 +71,8 @@ async function handleSaveMarkdown(payload) {
 
   const tweetData = payload.tweetData;
   const fileName = buildFileName(tweetData);
+  const downloadImagesEnabled = await getDownloadImagesEnabled();
+  const mediaLayout = await getMediaLayout();
   const nativeFolderPath = await getNativeFolderPath();
 
   if (nativeFolderPath) {
@@ -75,10 +81,13 @@ async function handleSaveMarkdown(payload) {
       throw new Error('Native helper is not ready. Please install helper from popup first.');
     }
 
-    const imageDownloads = await downloadImagesForTweet(tweetData, fileName, {
-      mode: 'native',
-      folderPath: nativeFolderPath,
-    });
+    const imageDownloads = downloadImagesEnabled
+      ? await downloadImagesForTweet(tweetData, fileName, {
+        mode: 'native',
+        folderPath: nativeFolderPath,
+        mediaLayout: mediaLayout,
+      })
+      : { downloaded: [], failed: [] };
     const markdown = buildMarkdown(tweetData, imageDownloads);
     const savedPath = await saveViaNative(markdown, fileName, nativeFolderPath);
     await pushHistory(tweetData, savedPath, imageDownloads);
@@ -86,10 +95,13 @@ async function handleSaveMarkdown(payload) {
   }
 
   const downloadDir = await getDownloadDir();
-  const imageDownloads = await downloadImagesForTweet(tweetData, fileName, {
-    mode: 'downloads',
-    downloadDir: downloadDir,
-  });
+  const imageDownloads = downloadImagesEnabled
+    ? await downloadImagesForTweet(tweetData, fileName, {
+      mode: 'downloads',
+      downloadDir: downloadDir,
+      mediaLayout: mediaLayout,
+    })
+    : { downloaded: [], failed: [] };
   const markdown = buildMarkdown(tweetData, imageDownloads);
   const fullPath = downloadDir + '/' + fileName;
 
@@ -230,12 +242,14 @@ async function downloadImagesForTweet(tweetData, markdownFileName, saveTarget) {
   const runTag = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
   const downloaded = [];
   const failed = [];
+  const mediaLayout = normalizeMediaLayout(saveTarget && saveTarget.mediaLayout);
+  const useMediaSubfolder = mediaLayout === 'subfolder';
 
   for (let index = 0; index < targets.length; index += 1) {
     const target = targets[index];
     const ext = detectImageExtension(target.url);
     const mediaName = baseName + '_' + runTag + '_' + pad(index + 1) + ext;
-    const relativePath = 'media/' + mediaName;
+    const relativePath = useMediaSubfolder ? ('media/' + mediaName) : mediaName;
 
     try {
       if (saveTarget && saveTarget.mode === 'native') {
@@ -377,6 +391,24 @@ async function getDownloadDir() {
   }
 }
 
+async function getDownloadImagesEnabled() {
+  try {
+    const data = await chrome.storage.local.get({ [DOWNLOAD_IMAGES_KEY]: DEFAULT_DOWNLOAD_IMAGES_ENABLED });
+    return data[DOWNLOAD_IMAGES_KEY] === true;
+  } catch (_) {
+    return DEFAULT_DOWNLOAD_IMAGES_ENABLED;
+  }
+}
+
+async function getMediaLayout() {
+  try {
+    const data = await chrome.storage.local.get({ [MEDIA_LAYOUT_KEY]: DEFAULT_MEDIA_LAYOUT });
+    return normalizeMediaLayout(data[MEDIA_LAYOUT_KEY]);
+  } catch (_) {
+    return DEFAULT_MEDIA_LAYOUT;
+  }
+}
+
 async function getNativeFolderPath() {
   try {
     const data = await chrome.storage.local.get({ [NATIVE_FOLDER_KEY]: '' });
@@ -441,6 +473,12 @@ function sendNativeHostMessage(message) {
       resolve(response || null);
     });
   });
+}
+
+function normalizeMediaLayout(rawValue) {
+  const raw = String(rawValue || '').trim().toLowerCase();
+  if (raw === 'same-folder') return 'same-folder';
+  return DEFAULT_MEDIA_LAYOUT;
 }
 
 function normalizeDownloadDir(rawValue) {

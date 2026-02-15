@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.2] - 2026-02-15
+
+### Added
+
+- Popup toggle `Download images` to control whether post images are fetched.
+
+### Changed
+
+- Default behavior is now Markdown-only (images OFF by default).
+- When images are OFF, image layout control is disabled in popup.
+
+## [1.1.1] - 2026-02-15
+
+### Added
+
+- Popup setting `Image layout` with two modes:
+  - `media/` subfolder (default, existing behavior)
+  - same folder as markdown (single-folder workflow)
+
+### Changed
+
+- Image download path and markdown image links now follow the selected image layout mode.
+
 ## [1.1.0] - 2026-02-11
 
 ### Added

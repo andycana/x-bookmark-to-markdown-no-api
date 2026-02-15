@@ -22,6 +22,17 @@
         </label>
       </section>
 
+      <section class="setting-row">
+        <div class="setting-text">
+          <div class="setting-title">Download images</div>
+          <div id="downloadImagesStatus" class="setting-status">Current: OFF (Markdown only)</div>
+        </div>
+        <label class="switch" for="downloadImagesToggle" aria-label="Download images toggle">
+          <input id="downloadImagesToggle" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </section>
+
       <section class="folder-setting">
         <div class="setting-title">Downloads subfolder (fallback mode)</div>
         <div class="folder-input-row">
@@ -33,6 +44,17 @@
           <button id="resetDirBtn" type="button" class="ghost">Reset</button>
         </div>
         <div id="downloadDirStatus" class="setting-status">Current: Downloads/x-bookmark-local</div>
+      </section>
+
+      <section class="folder-setting">
+        <div class="setting-title">Image layout</div>
+        <div class="folder-input-row">
+          <select id="mediaLayoutSelect" aria-label="Image layout">
+            <option value="subfolder">Save images in media/ subfolder</option>
+            <option value="same-folder">Save images next to markdown (single folder)</option>
+          </select>
+        </div>
+        <div id="mediaLayoutStatus" class="setting-status">Current: media/ subfolder</div>
       </section>
 
       <section class="folder-setting native-setting">

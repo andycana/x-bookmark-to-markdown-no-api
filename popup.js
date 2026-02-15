@@ -1,12 +1,17 @@
 const AUTO_SAVE_KEY = 'xbls_auto_save_enabled';
+const DOWNLOAD_IMAGES_KEY = 'xbls_download_images_enabled';
+const DEFAULT_DOWNLOAD_IMAGES_ENABLED = false;
 const DOWNLOAD_DIR_KEY = 'xbls_download_dir';
 const DEFAULT_DOWNLOAD_DIR = 'x-bookmark-local';
+const MEDIA_LAYOUT_KEY = 'xbls_media_layout';
+const DEFAULT_MEDIA_LAYOUT = 'subfolder';
 const NATIVE_FOLDER_KEY = 'xbls_native_folder_path';
 const NATIVE_HOST_NAME = 'com.xbookmark.local';
 
 document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('clearBtn').addEventListener('click', clearHistory);
   document.getElementById('autoSaveToggle').addEventListener('change', onAutoSaveToggleChange);
+  document.getElementById('downloadImagesToggle').addEventListener('change', onDownloadImagesToggleChange);
   document.getElementById('saveDirBtn').addEventListener('click', saveDownloadDir);
   document.getElementById('resetDirBtn').addEventListener('click', resetDownloadDir);
   document.getElementById('downloadDirInput').addEventListener('keydown', function (event) {
@@ -15,13 +20,16 @@ document.addEventListener('DOMContentLoaded', function () {
       saveDownloadDir();
     }
   });
+  document.getElementById('mediaLayoutSelect').addEventListener('change', onMediaLayoutChange);
 
   document.getElementById('pickNativeFolderBtn').addEventListener('click', pickNativeFolder);
   document.getElementById('clearNativeFolderBtn').addEventListener('click', clearNativeFolder);
   document.getElementById('installNativeBtn').addEventListener('click', downloadNativeInstaller);
 
   loadAutoSaveSetting();
+  loadDownloadImagesSetting();
   loadDownloadDirSetting();
+  loadMediaLayoutSetting();
   loadNativeStatus();
   loadHistory();
 });
@@ -69,6 +77,34 @@ async function onAutoSaveToggleChange(event) {
     statusEl.textContent = enabled ? 'Current: ON' : 'Current: OFF (bookmark only)';
   }
   await chrome.storage.local.set({ [AUTO_SAVE_KEY]: enabled });
+}
+
+async function loadDownloadImagesSetting() {
+  const toggleEl = document.getElementById('downloadImagesToggle');
+  const statusEl = document.getElementById('downloadImagesStatus');
+  if (!toggleEl || !statusEl) return;
+
+  try {
+    const data = await chrome.storage.local.get({ [DOWNLOAD_IMAGES_KEY]: DEFAULT_DOWNLOAD_IMAGES_ENABLED });
+    const enabled = data[DOWNLOAD_IMAGES_KEY] === true;
+    toggleEl.checked = enabled;
+    statusEl.textContent = enabled ? 'Current: ON' : 'Current: OFF (Markdown only)';
+    syncMediaLayoutEnabled(enabled);
+  } catch (_) {
+    toggleEl.checked = DEFAULT_DOWNLOAD_IMAGES_ENABLED;
+    statusEl.textContent = 'Current: OFF (Markdown only)';
+    syncMediaLayoutEnabled(DEFAULT_DOWNLOAD_IMAGES_ENABLED);
+  }
+}
+
+async function onDownloadImagesToggleChange(event) {
+  const enabled = !!(event && event.target && event.target.checked);
+  const statusEl = document.getElementById('downloadImagesStatus');
+  if (statusEl) {
+    statusEl.textContent = enabled ? 'Current: ON' : 'Current: OFF (Markdown only)';
+  }
+  await chrome.storage.local.set({ [DOWNLOAD_IMAGES_KEY]: enabled });
+  syncMediaLayoutEnabled(enabled);
 }
 
 async function loadDownloadDirSetting() {
@@ -136,6 +172,74 @@ function sanitizeDirectoryPart(value) {
     .replace(/\s+/g, '_')
     .replace(/^\.+$/, '')
     .slice(0, 40);
+}
+
+async function loadMediaLayoutSetting() {
+  const selectEl = document.getElementById('mediaLayoutSelect');
+  if (!selectEl) return;
+
+  try {
+    const data = await chrome.storage.local.get({ [MEDIA_LAYOUT_KEY]: DEFAULT_MEDIA_LAYOUT });
+    const normalized = normalizeMediaLayout(data[MEDIA_LAYOUT_KEY]);
+    selectEl.value = normalized;
+    updateMediaLayoutStatus(normalized, 'Current');
+
+    if (normalized !== data[MEDIA_LAYOUT_KEY]) {
+      await chrome.storage.local.set({ [MEDIA_LAYOUT_KEY]: normalized });
+    }
+    syncMediaLayoutEnabled(isDownloadImagesEnabled());
+  } catch (_) {
+    selectEl.value = DEFAULT_MEDIA_LAYOUT;
+    updateMediaLayoutStatus(DEFAULT_MEDIA_LAYOUT, 'Current');
+    syncMediaLayoutEnabled(isDownloadImagesEnabled());
+  }
+}
+
+async function onMediaLayoutChange(event) {
+  const selected = normalizeMediaLayout(event && event.target ? event.target.value : DEFAULT_MEDIA_LAYOUT);
+  await chrome.storage.local.set({ [MEDIA_LAYOUT_KEY]: selected });
+
+  const selectEl = document.getElementById('mediaLayoutSelect');
+  if (selectEl) {
+    selectEl.value = selected;
+  }
+  updateMediaLayoutStatus(selected, 'Saved');
+}
+
+function normalizeMediaLayout(rawValue) {
+  const raw = String(rawValue || '').trim().toLowerCase();
+  if (raw === 'same-folder') return 'same-folder';
+  return DEFAULT_MEDIA_LAYOUT;
+}
+
+function updateMediaLayoutStatus(layout, prefix) {
+  const statusEl = document.getElementById('mediaLayoutStatus');
+  if (!statusEl) return;
+
+  const normalized = normalizeMediaLayout(layout);
+  const target = normalized === 'same-folder'
+    ? 'single folder (same as markdown)'
+    : 'media/ subfolder';
+  statusEl.textContent = (prefix || 'Current') + ': ' + target;
+}
+
+function isDownloadImagesEnabled() {
+  const toggleEl = document.getElementById('downloadImagesToggle');
+  if (!toggleEl) return DEFAULT_DOWNLOAD_IMAGES_ENABLED;
+  return !!toggleEl.checked;
+}
+
+function syncMediaLayoutEnabled(enabled) {
+  const selectEl = document.getElementById('mediaLayoutSelect');
+  const statusEl = document.getElementById('mediaLayoutStatus');
+  if (!selectEl || !statusEl) return;
+
+  selectEl.disabled = !enabled;
+  if (!enabled) {
+    statusEl.textContent = 'Current: disabled (images OFF)';
+    return;
+  }
+  updateMediaLayoutStatus(selectEl.value, 'Current');
 }
 
 async function loadNativeStatus() {

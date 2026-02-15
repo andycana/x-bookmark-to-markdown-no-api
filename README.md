@@ -71,12 +71,20 @@ A fully local Chrome extension that saves bookmarked posts from X/Twitter to Mar
 
 1. Open `https://x.com` (or `https://twitter.com`)
 2. Click bookmark on any post
-3. The extension auto-saves a Markdown file and downloads extractable images
+3. The extension auto-saves a Markdown file (images are optional)
 
 Default output directory:
 
-- `Downloads/x-bookmark-local/`
-- `Downloads/x-bookmark-local/media/` (downloaded images)
+- Markdown: `Downloads/x-bookmark-local/`
+- Images: disabled by default; if enabled, saved under `Downloads/x-bookmark-local/media/`
+
+Optional image download:
+
+1. Open the extension popup
+2. Turn on **Download images**
+3. (Optional) choose **Image layout**:
+   - `media/` subfolder
+   - same folder as markdown
 
 Custom output directory (new):
 
@@ -87,6 +95,12 @@ Custom output directory (new):
 Example: `my-notes/x-bookmarks`
 - Markdown: `Downloads/my-notes/x-bookmarks/`
 - Images: `Downloads/my-notes/x-bookmarks/media/`
+
+Single-folder mode (new):
+
+1. Open the extension popup
+2. Set **Image layout** to **Save images next to markdown (single folder)**
+3. New saves will place `.md` and image files in the same folder
 
 Absolute folder mode (Native helper):
 
